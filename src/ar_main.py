@@ -17,8 +17,7 @@ from objloader_simple import *
 
 # Minimum number of matches that have to be found
 # to consider the recognition valid
-MIN_MATCHES = 10  
-
+MIN_MATCHES = 50
 
 def main():
     """
@@ -33,11 +32,13 @@ def main():
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     # load the reference surface that will be searched in the video stream
     dir_name = os.getcwd()
-    model = cv2.imread(os.path.join(dir_name, 'reference/model.jpg'), 0)
+    model = cv2.imread(os.path.join(dir_name, 'reference/target-3.jpg'), 0)
     # Compute model keypoints and its descriptors
     kp_model, des_model = orb.detectAndCompute(model, None)
     # Load 3D model from OBJ file
     obj = OBJ(os.path.join(dir_name, 'models/fox.obj'), swapyz=True)  
+    tex = cv2.imread('texture.jpg', cv2.IMREAD_COLOR)
+    th, tw, _ = tex.shape
     # init video capture
     cap = cv2.VideoCapture(0)
 
@@ -45,12 +46,15 @@ def main():
         # read the current frame
         ret, frame = cap.read()
         if not ret:
-            print "Unable to capture video"
+            print ("Unable to capture video")
             return 
         # find and draw the keypoints of the frame
         kp_frame, des_frame = orb.detectAndCompute(frame, None)
         # match frame descriptors with model descriptors
-        matches = bf.match(des_model, des_frame)
+        try:
+            matches = bf.match(des_model, des_frame)
+        except:
+            continue
         # sort them in the order of their distance
         # the lower the distance, the better the match
         matches = sorted(matches, key=lambda x: x.distance)
@@ -72,39 +76,38 @@ def main():
                 frame = cv2.polylines(frame, [np.int32(dst)], True, 255, 3, cv2.LINE_AA)  
             # if a valid homography matrix was found render cube on model plane
             if homography is not None:
-                try:
-                    # obtain 3D projection matrix from homography matrix and camera parameters
-                    projection = projection_matrix(camera_parameters, homography)  
-                    # project cube or model
-                    frame = render(frame, obj, projection, model, False)
-                    #frame = render(frame, model, projection)
-                except:
-                    pass
+                # obtain 3D projection matrix from homography matrix and camera parameters
+                projection = projection_matrix(camera_parameters, homography)  
+                # project cube or model
+                frame = render(frame, obj, projection, model, False, tex, th, tw)
+                #frame = render(frame, model, projection)
             # draw first 10 matches.
             if args.matches:
                 frame = cv2.drawMatches(model, kp_model, frame, kp_frame, matches[:10], 0, flags=2)
             # show result
-            cv2.imshow('frame', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
         else:
-            print "Not enough matches found - %d/%d" % (len(matches), MIN_MATCHES)
+            print ("Not enough matches found - %d/%d" % (len(matches), MIN_MATCHES))
+        cv2.imshow('frame', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
 
     cap.release()
     cv2.destroyAllWindows()
     return 0
 
-def render(img, obj, projection, model, color=False):
+def render(img, obj, projection, model, color, tex, th, tw):
     """
     Render a loaded obj model into the current video frame
     """
     vertices = obj.vertices
     scale_matrix = np.eye(3) * 3
     h, w = model.shape
+    cpos = np.dot(np.linalg.inv(projection[:, :3]), projection[:, 3])
 
     for face in obj.faces:
         face_vertices = face[0]
+        texture_vertices = face[2]
         points = np.array([vertices[vertex - 1] for vertex in face_vertices])
         points = np.dot(points, scale_matrix)
         # render model in the middle of the reference surface. To do so,
@@ -112,12 +115,14 @@ def render(img, obj, projection, model, color=False):
         points = np.array([[p[0] + w / 2, p[1] + h / 2, p[2]] for p in points])
         dst = cv2.perspectiveTransform(points.reshape(-1, 1, 3), projection)
         imgpts = np.int32(dst)
-        if color is False:
-            cv2.fillConvexPoly(img, imgpts, (137, 27, 211))
-        else:
-            color = hex_to_rgb(face[-1])
-            color = color[::-1]  # reverse
-            cv2.fillConvexPoly(img, imgpts, color)
+        col = [0, 0, 0]
+        for pt in texture_vertices:
+            tcoord = obj.texcoords[pt - 1]
+            x = int(tw * tcoord[0])
+            y = int(th * tcoord[1])
+            col = col + tex[x][y]
+        col = col / 3
+        cv2.fillConvexPoly(img, imgpts, col)
 
     return img
 
