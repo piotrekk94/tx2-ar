@@ -96,6 +96,11 @@ def main():
     cv2.destroyAllWindows()
     return 0
 
+
+def to_vertices(vertices, index):
+    return np.array([vertices[x - 1] for x in index])
+
+
 def render(img, obj, projection, model, color, tex, th, tw):
     """
     Render a loaded obj model into the current video frame
@@ -104,6 +109,9 @@ def render(img, obj, projection, model, color, tex, th, tw):
     scale_matrix = np.eye(3) * 3
     h, w = model.shape
     cpos = np.dot(np.linalg.inv(projection[:, :3]), projection[:, 3])
+
+    obj.faces.sort(key=lambda x: np.sqrt(np.sum((cpos - np.mean(np.array(to_vertices(vertices, x[0]))))**2)))
+
 
     for face in obj.faces:
         face_vertices = face[0]
